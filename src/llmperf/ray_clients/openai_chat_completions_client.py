@@ -28,6 +28,7 @@ class OpenAIChatCompletionsClient(LLMClient):
             "model": model,
             "messages": message,
             "stream": True,
+            "stream_options": {"include_usage": True},
         }
         sampling_params = request_config.sampling_params
         body.update(sampling_params or {})
@@ -67,6 +68,8 @@ class OpenAIChatCompletionsClient(LLMClient):
                 timeout=180,
                 headers=headers,
             ) as response:
+                prompt_tokens = 0
+                completion_tokens = 0
                 if response.status_code != 200:
                     error_msg = response.text
                     error_response_code = response.status_code
@@ -87,18 +90,27 @@ class OpenAIChatCompletionsClient(LLMClient):
                         error_msg = data["error"]["message"]
                         error_response_code = data["error"]["code"]
                         raise RuntimeError(data["error"]["message"])
+
+                    if "usage" in data:
+                        prompt_tokens = data["usage"]["prompt_tokens"]
+                        completion_tokens = data["usage"]["completion_tokens"]
                         
-                    delta = data["choices"][0]["delta"]
-                    if delta.get("content", None):
-                        if not ttft:
-                            ttft = time.monotonic() - start_time
-                            time_to_next_token.append(ttft)
-                        else:
-                            time_to_next_token.append(
-                                time.monotonic() - most_recent_received_token_time
-                            )
-                        most_recent_received_token_time = time.monotonic()
-                        generated_text += delta["content"]
+                    if "choices" in data and data["choices"]:
+                        delta = data["choices"][0]["delta"]
+                        if delta.get("content", None):
+                            if not ttft:
+                                ttft = time.monotonic() - start_time
+                                time_to_next_token.append(ttft)
+                            else:
+                                time_to_next_token.append(
+                                    time.monotonic() - most_recent_received_token_time
+                                )
+                            most_recent_received_token_time = time.monotonic()
+                            generated_text += delta["content"]
+
+            if prompt_tokens:
+                prompt_len = prompt_tokens
+                tokens_received = completion_tokens
 
             total_request_time = time.monotonic() - start_time
             output_throughput = tokens_received / total_request_time
